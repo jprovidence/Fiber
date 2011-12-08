@@ -15,6 +15,7 @@ import Data.Maybe
 import System.IO
 import System.IO.Unsafe
 import Foreign.Marshal.Alloc
+import Foreign.Storable
 
 
 type ByteString = B.ByteString
@@ -46,19 +47,48 @@ pushStdIdx (IndexPrototype bstr ni)
     | (B.null bstr) /= True && ((L.head "h") == (B.head bstr)) == True = unsafePerformIO $ do
         h <- openFile stdIdxPath ReadWriteMode
         hSetBinaryMode h True
-        _ <- updateIndexGiven (IndexPrototype bstr ni) h 0
+        _ <- updateIndexGiven (IndexPrototype bstr ni) h 0 (Just 0)
         hClose h
     | otherwise = unsafePerformIO $ do
         putStrLn "_error_psi: Non-standard URL, ignoring..."
 
 
-updateIndexGiven :: IndexPrototype -> Handle -> Int -> IO ()
-updateIndexGiven (IndexPrototype bstr ni) h pos = do
-    ptr <- mallocBytes 4
-    count <- hGetBuf h ptr 4
-    case count == 4 of
-        True ->
-        False -> putStrLn "_error_ugi: File IO error, ignoring..."
+updateIndexGiven :: IndexPrototype -> Handle -> Int -> Maybe Int -> IO ()
+
+updateIndexGiven (IndexPrototype bstr ni) h strPos (Just filePos) = do
+    updateIndexGiven (IndexPrototype bstr ni) h (strPos + 1)
+                     (seekToDollar h (toInteger filePos) (B.index bstr strPos))
+
+
+seekToDollar :: Handle -> Integer -> Char -> Maybe Int
+seekToDollar h fpos cha
+    | fpos == 1 = Nothing
+    | otherwise = unsafePerformIO $ do
+        ptr <- mallocBytes 1
+        hSeek h AbsoluteSeek fpos
+        _ <- hGetBuf h ptr 1
+        derefd <- peek ptr
+        case derefd == cha of
+            True -> do
+                free ptr
+                ptr <- mallocBytes 4
+                _ <- hGetBuf h ptr 4
+                ret <- peek ptr
+                free ptr
+                return $ Just ret
+            False -> do
+                free ptr
+                ptr <- mallocBytes 4
+                hSeek h RelativeSeek 4
+                _ <- hGetBuf h ptr 4
+                ret <- peek ptr :: IO (Int)
+                free ptr
+                return $ seekToDollar h (toInteger ret) cha
+
+
+
+
+
 
 
 
