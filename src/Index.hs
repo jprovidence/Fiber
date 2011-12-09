@@ -116,10 +116,10 @@ pushStdIdx (IndexPrototype bstr ni)
         eof <- hIsEOF h
         case eof of
             True -> do
-                startCleanBlock h (L.head "x")
-                updateIndexGiven (IndexPrototype bstr ni) h 0 (ReadOnly 0)
+                writeTrip h (L.head "x") (0 :: Int) (1 :: Int)
+                updateIndex (IndexPrototype bstr ni) h 0 (ReadOnly 0)
             False -> do
-                updateIndexGiven (IndexPrototype bstr ni) h 0 (ReadOnly 0)
+                updateIndex (IndexPrototype bstr ni) h 0 (ReadOnly 0)
         hClose h
     | otherwise = do
         putStrLn "_error_psi: Non-standard URL, ignoring..."
@@ -140,101 +140,82 @@ pushStdIdx (IndexPrototype bstr ni)
 
 updateIndex :: IndexPrototype -> Handle -> Int -> Tertiary Int32 -> IO ()
 updateIndex (IndexPrototype bstr ni) h strPos ter
-    | strPos == (B.length bstr) = do
-        writePos <- hTell h
-        writeBytes 1 h (L.head "$")
-        writeBytes 4 h ni
-        writeBytes 4 h (1 :: Int32)
-        hSeek h AbsoluteSeek $ tertiaryVal ter
-        writeBytes 4 h ((fromInteger writePos) :: Int32)
-    | otherwise = do
-        let curChar = B.index bstr $ fromIntegral strPos
+    | strPos == (B.length bstr) =
         case ter of
-            (ReadOnly fPos) -> updateIndexGiven (IndexPrototype bstr ni) h (strPos + 1)
-                                                (stepLevel h (toInteger fPos) curChar)
+            (Vertical v) -> do
+                writePos <- liftM (unsafePerformIO . evaluate) $ getEnd h
+                writeTrip h (L.head "$") ni (1 :: Int32)
+                hSeek h AbsoluteSeek $ toInteger v
+                writeBytes 4 h writePos
+            (ReadOnly ro) -> do
+                dollarFound <- moveToDollar h ro
+                if dollarFound == True
+                    then writeBytes 4 h ni
+                    else return ()
+    | otherwise =
+        let curChar = B.index bstr $ fromIntegral strPos
+        in case ter of
+            (ReadOnly fPos) -> do
+                pType <- stepLevel h (toInteger fPos) curChar
+                case pType of
+                    (ReadOnly res) -> updateIndex (IndexPrototype bstr ni) h (strPos + 1) pType
+                    (Horizontal res) -> updateIndex (IndexPrototype bstr ni) h strPos pType
             (Horizontal fPos) -> do
-                end <- return $ liftM (unsafePerformIO . evaluate) (getEnd h)
-                writeBytes 1 h curChar
-                writeBytes 4 h 0
-                writeBytes 4 h 1
-                hSeek fPos
+                end <- liftM (unsafePerformIO . evaluate) (getEnd h)
+                writeTrip h curChar (0 :: Int32) (1 :: Int32)
+                updatePos <- backFour h
+                updateIndex (IndexPrototype bstr ni) h (strPos + 1) (Vertical updatePos)
+                hSeek h AbsoluteSeek (toInteger fPos)
+                writeBytes 4 h end
+            (Vertical fPos) -> do
+                end <- liftM (unsafePerformIO . evaluate) (getEnd h)
+                writeTrip h curChar (0 :: Int32) (1 :: Int32)
+                updatePos <- backFour h
+                updateIndex (IndexPrototype bstr ni) h (strPos + 1) (Vertical updatePos)
+                hSeek h AbsoluteSeek $ toInteger fPos
                 writeBytes 4 h end
 
 
-    where tertiaryVal :: Tertiary Int32 -> Integer
-          tertiaryVal (Vertical i) = toInteger i
 
-          getEnd :: Handle -> IO (Int32)
+    where getEnd :: Handle -> IO (Int32)
           getEnd h = hSeek h SeekFromEnd 0 >> hTell h >>= \x -> return $ fromInteger x
 
+          backFour :: Handle -> IO (Int32)
+          backFour h = liftM ((\x -> x - 4) . fromInteger . unsafePerformIO . evaluate) (hTell h)
 
-stepLevel :: Handle -> Integer -> Char -> Tertiary Int32
+
+writeTrip :: (Storable a, Storable b) => Handle -> a -> b -> b -> IO ()
+writeTrip h a b c = do
+    writeBytes 1 h a
+    writeBytes 4 h b
+    writeBytes 4 h c
+
+
+stepLevel :: Handle -> Integer -> Char -> IO (Tertiary Int32)
 stepLevel h fPos ch
-    | fPos == 1 = unsafePerformIO $ do
+    | fPos == 1 = do
         pos <- hTell h
         eval <- evaluate pos
         return $ Horizontal (fromInteger (pos - 4))
-    | otherwise = unsafePerformIO $ do
+    | otherwise = do
         hSeek h AbsoluteSeek fPos
         x <- return $ readBytes 1 h
         case x == ch of
             True -> evaluate $ ReadOnly (readBytes 4 h)
-            False -> return $ stepLevel h (toInteger $ readBytes 4 h) ch
+            False -> do
+                hSeek h RelativeSeek 4
+                stepLevel h (toInteger $ ((readBytes 4 h) :: Int)) ch
 
 
-
-updateIndexGiven :: IndexPrototype -> Handle -> Int32 -> Tertiary Int32 -> IO ()
-updateIndexGiven (IndexPrototype bstr ni) h strPos tert
-    | fromIntegral strPos == B.length bstr = do
-        writePos <- startCleanBlock h (L.head "$")
-        back <- evaluate $ backtrack 8 h
-        hSeek h AbsoluteSeek $ toInteger back
-        writeBytes 4 h ni
-        t <- evaluate $ tertiaryVal tert
-        hSeek h AbsoluteSeek t
-        writeBytes 4 h (writePos :: Int32)
+moveToDollar :: Handle -> Int32 -> IO (Bool)
+moveToDollar h i
+    | i == 1 = return False
     | otherwise = do
-        case tert of
-            (ReadOnly filePos) -> updateIndexGiven (IndexPrototype bstr ni) h (strPos + 1)
-                                                   (seekToDollar h (toInteger filePos)
-                                                                   (B.index bstr $ fromIntegral strPos))
-            (Horizontal filePos) -> do
-                writePos <- startCleanBlock h (B.index bstr $ fromIntegral strPos)
-                eval <- evaluate filePos
-                updateIndexGiven (IndexPrototype bstr ni) h (strPos + 1) (Vertical $ backtrack 4 h)
-                linkToPrevious h eval writePos
-            (Vertical filePos) -> do
-                writePos <- startCleanBlock h (B.index bstr $ fromIntegral strPos)
-                eval <- evaluate filePos
-                updateIndexGiven (IndexPrototype bstr ni) h (strPos + 1) (Vertical $ backtrack 8 h)
-                linkToPrevious h eval writePos
-
-    where tertiaryVal :: Tertiary Int32 -> Integer
-          tertiaryVal (Vertical i) = toInteger i
-
-
-----------------------------------------------------------------------------------------------------
-
--- Seek to the end of the file, write a blank triple given the Char cha
-
-startCleanBlock :: Handle -> Char -> IO (Int32)
-startCleanBlock h cha = do
-    hSeek h SeekFromEnd (toInteger 0)
-    writePos <- liftM fromInteger (hTell h)
-    writeBytes 1 h cha
-    writeBytes 4 h (0 :: Int32)
-    writeBytes 4 h (1 :: Int32)
-    return $ writePos
-
-
-----------------------------------------------------------------------------------------------------
-
--- writes a link to the current IndexTriple at the previous triple
-
-linkToPrevious :: Handle -> Int32 -> Int32 -> IO ()
-linkToPrevious h filePos writePos = do
-    hSeek h AbsoluteSeek (toInteger filePos)
-    writeBytes 4 h (writePos :: Int32)
+        hSeek h AbsoluteSeek $ toInteger i
+        x <- return $ readBytes 1 h
+        case x == (L.head "$") of
+            True -> return True
+            False -> hSeek h RelativeSeek 4 >> return (readBytes 4 h) >>= \y -> moveToDollar h y
 
 
 ----------------------------------------------------------------------------------------------------
@@ -260,35 +241,6 @@ readBytes nBytes h = unsafePerformIO $ do
     ret <- peek ptr
     free ptr
     return $ ret
-
-
-----------------------------------------------------------------------------------------------------
-
--- find the file position located @i@ bytes before the current position. Does not actually move
--- the file cursor
-
-backtrack :: Int32 -> Handle -> Int32
-backtrack i h = (\x -> x - i) . fromInteger . unsafePerformIO $ hTell h
-
-
-----------------------------------------------------------------------------------------------------
-
--- checks all characters on an index level to see if they match the @cha@
-
-seekToDollar :: Handle -> Integer -> Char -> Tertiary Int32
-seekToDollar h fpos cha
-    | fpos == 1 = Horizontal ((fromInteger $ unsafePerformIO $ hTell h) - 4)
-    | otherwise = unsafePerformIO $ do
-        hSeek h AbsoluteSeek fpos
-        derefd <- return $ readBytes 1 h
-        case derefd == cha of
-            True -> do
-                return $ ReadOnly (readBytes 4 h)
-            False -> do
-                hSeek h RelativeSeek 4
-                newPos <- return $ (readBytes 4 h :: Int)
-                return $ seekToDollar h (toInteger newPos) cha
-
 
 
 
