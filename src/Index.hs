@@ -105,6 +105,34 @@ stdIdxPath = "/home/providence/Dropbox/_ticket/haskell_devel/fiber/fiber/data/in
 -- STANDARD DISK INDEX --
 
 ----------------------------------------------------------------------------------------------------
+-- LOOKUP
+
+
+lookupStdIdx :: ByteString -> IO (NodeIndex)
+lookupStdIdx bstr =
+    openBinaryFile stdIdxPath ReadWriteMode >>= \h -> lookupStd h bstr 0 (ReadOnly 0) >>= \x ->
+    hClose h >> return x
+
+
+lookupStd :: Handle -> ByteString -> Int -> Tertiary Int32 -> IO (NodeIndex)
+lookupStd h bstr sPos (ReadOnly fPos)
+    | fPos == 1 = return (-1)
+    | sPos == B.length bstr =
+        hSeek h AbsoluteSeek (toInteger fPos) >> return (readBytes 4 h) >>= \x -> return x
+    | otherwise = do
+        hSeek h AbsoluteSeek $ toInteger fPos
+        ch <- return $ readBytes 1 h
+        case ch == (B.index bstr sPos) of
+            True -> return (readBytes 4 h) >>= \new -> lookupStd h bstr (sPos + 1) (ReadOnly new)
+            False -> hSeek h RelativeSeek 4 >> return (readBytes 4 h) >>= \n -> lookupStd h bstr sPos
+                                                                                        (ReadOnly n)
+
+
+
+
+----------------------------------------------------------------------------------------------------
+-- INSERT
+
 
 -- Handles much the cruft of opening/closing + setting binary mode on the file
 -- Delegates the updating of the file given the list of index prototypes to #updateIndexGiven
@@ -116,7 +144,7 @@ pushStdIdx (IndexPrototype bstr ni)
         eof <- hIsEOF h
         case eof of
             True -> do
-                writeTrip h (L.head "x") (0 :: Int) (1 :: Int)
+                writeTrip h (L.head "x") (0 :: Int32) (1 :: Int32)
                 updateIndex (IndexPrototype bstr ni) h 0 (ReadOnly 0)
             False -> do
                 updateIndex (IndexPrototype bstr ni) h 0 (ReadOnly 0)
@@ -168,8 +196,6 @@ updateIndex (IndexPrototype bstr ni) h strPos ter
                 updateIndex (IndexPrototype bstr ni) h (strPos + 1) (Vertical updatePos)
                 hSeek h AbsoluteSeek $ toInteger fPos
                 writeBytes 4 h end
-
-
 
     where getEnd :: Handle -> IO (Int32)
           getEnd h = hSeek h SeekFromEnd 0 >> hTell h >>= \x -> return $ fromInteger x
@@ -271,7 +297,7 @@ extractTertiary (Horizontal x) = x
 -- to remember to supply these each time
 
 indexLookup :: IndexTree -> ByteString -> (Maybe NodeIndex)
-indexLookup tree str = iLookup tree str 0
+indexLookup tree str = indexLookup' tree str 0
 
 
 ----------------------------------------------------------------------------------------------------
@@ -282,11 +308,11 @@ indexLookup tree str = iLookup tree str 0
     -- C : The ByteString will specify a non-existent path through the IndexTree, in which case
     --     Nothing will be the value of the func
 
-iLookup :: IndexTree -> ByteString -> Int -> (Maybe NodeIndex)
-iLookup (IndexTree tbyte ttree tni) str pos
+indexLookup' :: IndexTree -> ByteString -> Int -> (Maybe NodeIndex)
+indexLookup' (IndexTree tbyte ttree tni) str pos
     | (B.length str) == pos = tni
     | otherwise = case (B.index str pos) `B.elem` tbyte of
-                      True -> iLookup (ttree !! (elemIdx str tbyte pos)) str (pos + 1)
+                      True -> indexLookup' (ttree !! (elemIdx str tbyte pos)) str (pos + 1)
                       False -> Nothing
 
 
