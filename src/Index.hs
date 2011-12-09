@@ -55,6 +55,7 @@ module Index (
 ,   pushIndex
 ,   indexLookup
 ,   pushStdIdx
+,   lookupStdIdx
 ) where
 
 import qualified Data.ByteString.Char8 as B
@@ -111,14 +112,14 @@ stdIdxPath = "/home/providence/Dropbox/_ticket/haskell_devel/fiber/fiber/data/in
 lookupStdIdx :: ByteString -> IO (NodeIndex)
 lookupStdIdx bstr =
     openBinaryFile stdIdxPath ReadWriteMode >>= \h -> lookupStd h bstr 0 (ReadOnly 0) >>= \x ->
-    hClose h >> return x
+    evaluate x >>= \eval -> hClose h >> return eval
 
 
 lookupStd :: Handle -> ByteString -> Int -> Tertiary Int32 -> IO (NodeIndex)
 lookupStd h bstr sPos (ReadOnly fPos)
     | fPos == 1 = return (-1)
     | sPos == B.length bstr =
-        hSeek h AbsoluteSeek (toInteger fPos) >> return (readBytes 4 h) >>= \x -> return x
+        moveToDollar h fPos >> return (readBytes 4 h) >>= \x -> return x
     | otherwise = do
         hSeek h AbsoluteSeek $ toInteger fPos
         ch <- return $ readBytes 1 h
@@ -143,11 +144,10 @@ pushStdIdx (IndexPrototype bstr ni)
         h <- openBinaryFile stdIdxPath ReadWriteMode
         eof <- hIsEOF h
         case eof of
-            True -> do
-                writeTrip h (L.head "x") (0 :: Int32) (1 :: Int32)
+            True ->
+                writeTrip h (L.head "x") (0 :: Int32) (1 :: Int32) >>
                 updateIndex (IndexPrototype bstr ni) h 0 (ReadOnly 0)
-            False -> do
-                updateIndex (IndexPrototype bstr ni) h 0 (ReadOnly 0)
+            False -> updateIndex (IndexPrototype bstr ni) h 0 (ReadOnly 0)
         hClose h
     | otherwise = do
         putStrLn "_error_psi: Non-standard URL, ignoring..."
