@@ -160,17 +160,11 @@ updateIndex (IndexPrototype bstr ni) h strPos ter
                 case pType of
                     (ReadOnly res) -> updateIndex (IndexPrototype bstr ni) h (strPos + 1) pType
                     (Horizontal res) -> updateIndex (IndexPrototype bstr ni) h strPos pType
-            (Horizontal fPos) -> do
+            otherwise -> do
+                fPos <- return $ extractTertiary ter
                 end <- liftM (unsafePerformIO . evaluate) (getEnd h)
                 writeTrip h curChar (0 :: Int32) (1 :: Int32)
-                updatePos <- backFour h
-                updateIndex (IndexPrototype bstr ni) h (strPos + 1) (Vertical updatePos)
-                hSeek h AbsoluteSeek (toInteger fPos)
-                writeBytes 4 h end
-            (Vertical fPos) -> do
-                end <- liftM (unsafePerformIO . evaluate) (getEnd h)
-                writeTrip h curChar (0 :: Int32) (1 :: Int32)
-                updatePos <- backFour h
+                updatePos <- cursorBack h 8
                 updateIndex (IndexPrototype bstr ni) h (strPos + 1) (Vertical updatePos)
                 hSeek h AbsoluteSeek $ toInteger fPos
                 writeBytes 4 h end
@@ -180,16 +174,23 @@ updateIndex (IndexPrototype bstr ni) h strPos ter
     where getEnd :: Handle -> IO (Int32)
           getEnd h = hSeek h SeekFromEnd 0 >> hTell h >>= \x -> return $ fromInteger x
 
-          backFour :: Handle -> IO (Int32)
-          backFour h = liftM ((\x -> x - 4) . fromInteger . unsafePerformIO . evaluate) (hTell h)
+          cursorBack :: Handle -> Int32 -> IO (Int32)
+          cursorBack h i = liftM ((\x -> x - i) . fromInteger . unsafePerformIO . evaluate) (hTell h)
 
 
+----------------------------------------------------------------------------------------------------
+
+-- Write a triple to @h@ built from @a@ @b@ & @c@
 writeTrip :: (Storable a, Storable b) => Handle -> a -> b -> b -> IO ()
 writeTrip h a b c = do
     writeBytes 1 h a
     writeBytes 4 h b
     writeBytes 4 h c
 
+
+----------------------------------------------------------------------------------------------------
+
+-- steps across an index level to determine whether a char is already indexed.
 
 stepLevel :: Handle -> Integer -> Char -> IO (Tertiary Int32)
 stepLevel h fPos ch
@@ -206,6 +207,11 @@ stepLevel h fPos ch
                 hSeek h RelativeSeek 4
                 stepLevel h (toInteger $ ((readBytes 4 h) :: Int)) ch
 
+
+----------------------------------------------------------------------------------------------------
+
+-- moves the cursor just past the "$" on an index level, or to the end of the level if "$" does not
+-- exist
 
 moveToDollar :: Handle -> Int32 -> IO (Bool)
 moveToDollar h i
@@ -241,6 +247,17 @@ readBytes nBytes h = unsafePerformIO $ do
     ret <- peek ptr
     free ptr
     return $ ret
+
+
+----------------------------------------------------------------------------------------------------
+
+-- get a value out of a Tertiary
+
+extractTertiary :: Tertiary a -> a
+extractTertiary (ReadOnly x) = x
+extractTertiary (Vertical x) = x
+extractTertiary (Horizontal x) = x
+
 
 
 
