@@ -1,70 +1,5 @@
-module Index (
-    IndexTree(IndexTree)
-,   IndexPrototype(IndexPrototype)
-,   pushIndex
-,   indexLookup
-) where
-
-import qualified Data.ByteString.Char8 as B
-import qualified Data.ByteString.Lazy as BL
-import qualified Data.ByteString.Internal as BI
-import Data.Binary.Put
-import Data.Word
-import Data.List as L
-import Data.Maybe
-import System.IO
-import System.IO.Unsafe
-import Control.Monad
-import Foreign.Marshal.Alloc
-import Foreign.Storable
-
-
-type ByteString = B.ByteString
-
-type NodeIndex = Word32
-
-type Node = Word32
-
-data IndexTpl = Tpl Word8 (Maybe Word32) (Maybe Word32)
-
-data IndexTree = IndexTree ByteString [IndexTree] (Maybe NodeIndex)
-
-data IndexPrototype = IndexPrototype ByteString NodeIndex
-
-data Ternary a = ReadOnly a
-                | Vertical a
-                | Horizontal a
-
-
-maxFilePos = 4294967295
-
-stdIdxPath = "/home/providence/Dropbox/_ticket/haskell_devel/fiber/fiber/data/index_initial._ticket"
-
-
-----------------------------------------------------------------------------------------------------
-
--- STANDARD DISK INDEX --
-
-----------------------------------------------------------------------------------------------------
-
--- Handles much the cruft of opening/closing + setting binary mode on the file
--- Delegates the updating of the file given the list of index prototypes to #updateIndexGiven
-
-pushStdIdx :: IndexPrototype -> ()
-pushStdIdx (IndexPrototype bstr ni)
-    | (B.null bstr) /= True && ((L.head "h") == (B.head bstr)) == True = unsafePerformIO $ do
-        h <- openFile stdIdxPath ReadWriteMode
-        hSetBinaryMode h True
-        _ <- updateIndexGiven (IndexPrototype bstr ni) h 0 (ReadOnly 0)
-        hClose h
-    | otherwise = unsafePerformIO $ do
-        putStrLn "_error_psi: Non-standard URL, ignoring..."
-
-
-----------------------------------------------------------------------------------------------------
-
--- This function takes an IndexPrototype and commits it to the actual index store, stored on a flat
--- file. Given the fig 1. & fig 2, this function works as follows
+--
+--   A brief explanation of the functioning of this index:
 
 --   Indexing the urls "www.google.com", "www.hoogle.com" and "www.hammer.com"
 --
@@ -96,44 +31,215 @@ pushStdIdx (IndexPrototype bstr ni)
 --   Word32a, the file position of the beginning of the next index level
 --   Word32b, the file position of the next char indexed at this index level
 --
---   As such, the beginning of this index on disk word look like:
+--   When multiple characters are indexed on the same line a pointer to the next file position
+--   is stored on the right-most position of the index triple:
 --
---  ['w', 10, 1] ['w', 19, 1] ['w', 28, 1] ['.', 0, 1] ['g', 0, 1] ['o', 0, 1] ['o', 0, 1] ['g', 0, 1]
---    1   2   6   10   11  15   19  20 24  28   29 33   37  38 42   46  47 51   55  56 60  64   65 69
+--     ["a", 0, *15*]
+--
+--   Otherwise, there is a one in the right-most position
+--
+--     ["a", 0, *1*]
+--
+--   A pointer to the next level of the index is stored in the middle position
+--
+--     ["a", *82*, 1]
+--
+--   Finally, the NodeIndex is stored at the middle of a triple indexing a dollarsign
+--
+--     ["$", (NodeIndex), 1]
 
---  ['l', 0, 1] ['e', 0, 1] ['.', 0, 1] ['c', 0, 1] ['o', 0, 1] ['m', 0, 1]
+
+module Index (
+    IndexTree(IndexTree)
+,   IndexPrototype(IndexPrototype)
+,   pushIndex
+,   indexLookup
+,   pushStdIdx
+) where
+
+import qualified Data.ByteString.Char8 as B
+import qualified Data.ByteString.Lazy as BL
+import qualified Data.ByteString.Internal as BI
+import Data.Binary.Put
+import Data.Word
+import Data.List as L
+import Data.Maybe
+import Data.Int
+import System.IO
+import System.IO.Error
+import System.IO.Unsafe
+import Control.Monad
+import Control.Exception
+import Foreign.Marshal.Alloc
+import Foreign.Storable
 
 
-updateIndexGiven :: IndexPrototype -> Handle -> Int -> Ternary Int -> IO ()
+type ByteString = B.ByteString
 
-updateIndexGiven (IndexPrototype bstr ni) h strPos (ReadOnly filePos) =
-    updateIndexGiven (IndexPrototype bstr ni) h (strPos + 1)
-                     (seekToDollar h (toInteger filePos) (B.index bstr strPos))
+type NodeIndex = Int32
 
-updateIndexGiven (IndexPrototype bstr ni) h strPos (Horizontal filePos) = do
-    writePos <- startCleanBlock h (B.index bstr strPos)
-    updateIndexGiven (IndexPrototype bstr ni) h (strPos + 1) (Vertical $ backtrack 4 h)
-    linkToPrevious h filePos writePos
+type Node = Word32
 
-updateIndexGiven (IndexPrototype bstr ni) h strPos (Vertical filePos) = do
-    writePos <- startCleanBlock h (B.index bstr strPos)
-    updateIndexGiven (IndexPrototype bstr ni) h (strPos + 1) (Vertical $ backtrack 8 h)
-    linkToPrevious h filePos writePos
+data IndexTpl = Tpl Word8 (Maybe Word32) (Maybe Word32)
 
-startCleanBlock :: Handle -> Char -> IO (Int)
+data IndexTree = IndexTree ByteString [IndexTree] (Maybe NodeIndex)
+
+data IndexPrototype = IndexPrototype ByteString NodeIndex
+
+data Tertiary a = ReadOnly a
+                 | Vertical a
+                 | Horizontal a
+
+
+-- File position after which a new index file is started
+maxFilePos = 4294967295
+
+-- Location of the index file on disk
+stdIdxPath = "/home/providence/Dropbox/_ticket/haskell_devel/fiber/fiber/data/index_initial._ticket"
+
+
+
+
+----------------------------------------------------------------------------------------------------
+
+-- STANDARD DISK INDEX --
+
+----------------------------------------------------------------------------------------------------
+
+-- Handles much the cruft of opening/closing + setting binary mode on the file
+-- Delegates the updating of the file given the list of index prototypes to #updateIndexGiven
+
+pushStdIdx :: IndexPrototype -> IO ()
+pushStdIdx (IndexPrototype bstr ni)
+    | (B.null bstr) /= True && ((L.head "h") == (B.head bstr)) == True = do
+        h <- openBinaryFile stdIdxPath ReadWriteMode
+        eof <- hIsEOF h
+        case eof of
+            True -> do
+                startCleanBlock h (L.head "x")
+                updateIndexGiven (IndexPrototype bstr ni) h 0 (ReadOnly 0)
+            False -> do
+                updateIndexGiven (IndexPrototype bstr ni) h 0 (ReadOnly 0)
+        hClose h
+    | otherwise = do
+        putStrLn "_error_psi: Non-standard URL, ignoring..."
+
+
+----------------------------------------------------------------------------------------------------
+
+-- This function takes an IndexPrototype and commits it to the actual index store.
+-- It will follow the existing index as far as possible by recursing, passing a 'ReadOnly' filePos.
+--
+-- When needed, it will deviate from the existing index signifying the need to do this by passing
+-- a 'Horizontal' file position to the next level of recursion. This position indicates the triple
+-- that needs to be updated with the write position of the new character introduced to that index
+-- level.
+--
+-- As it adds new index levels it will recurse, providing a Vertical file position for the next
+-- iteration to update with its write position
+
+updateIndex :: IndexPrototype -> Handle -> Int -> Tertiary Int32 -> IO ()
+updateIndex (IndexPrototype bstr ni) h strPos ter
+    | strPos == (B.length bstr) = do
+        writePos <- hTell h
+        writeBytes 1 h (L.head "$")
+        writeBytes 4 h ni
+        writeBytes 4 h (1 :: Int32)
+        hSeek h AbsoluteSeek $ tertiaryVal ter
+        writeBytes 4 h ((fromInteger writePos) :: Int32)
+    | otherwise = do
+        let curChar = B.index bstr $ fromIntegral strPos
+        case ter of
+            (ReadOnly fPos) -> updateIndexGiven (IndexPrototype bstr ni) h (strPos + 1)
+                                                (stepLevel h (toInteger fPos) curChar)
+            (Horizontal fPos) -> do
+                end <- return $ liftM (unsafePerformIO . evaluate) (getEnd h)
+                writeBytes 1 h curChar
+                writeBytes 4 h 0
+                writeBytes 4 h 1
+                hSeek fPos
+                writeBytes 4 h end
+
+
+    where tertiaryVal :: Tertiary Int32 -> Integer
+          tertiaryVal (Vertical i) = toInteger i
+
+          getEnd :: Handle -> IO (Int32)
+          getEnd h = hSeek h SeekFromEnd 0 >> hTell h >>= \x -> return $ fromInteger x
+
+
+stepLevel :: Handle -> Integer -> Char -> Tertiary Int32
+stepLevel h fPos ch
+    | fPos == 1 = unsafePerformIO $ do
+        pos <- hTell h
+        eval <- evaluate pos
+        return $ Horizontal (fromInteger (pos - 4))
+    | otherwise = unsafePerformIO $ do
+        hSeek h AbsoluteSeek fPos
+        x <- return $ readBytes 1 h
+        case x == ch of
+            True -> evaluate $ ReadOnly (readBytes 4 h)
+            False -> return $ stepLevel h (toInteger $ readBytes 4 h) ch
+
+
+
+updateIndexGiven :: IndexPrototype -> Handle -> Int32 -> Tertiary Int32 -> IO ()
+updateIndexGiven (IndexPrototype bstr ni) h strPos tert
+    | fromIntegral strPos == B.length bstr = do
+        writePos <- startCleanBlock h (L.head "$")
+        back <- evaluate $ backtrack 8 h
+        hSeek h AbsoluteSeek $ toInteger back
+        writeBytes 4 h ni
+        t <- evaluate $ tertiaryVal tert
+        hSeek h AbsoluteSeek t
+        writeBytes 4 h (writePos :: Int32)
+    | otherwise = do
+        case tert of
+            (ReadOnly filePos) -> updateIndexGiven (IndexPrototype bstr ni) h (strPos + 1)
+                                                   (seekToDollar h (toInteger filePos)
+                                                                   (B.index bstr $ fromIntegral strPos))
+            (Horizontal filePos) -> do
+                writePos <- startCleanBlock h (B.index bstr $ fromIntegral strPos)
+                eval <- evaluate filePos
+                updateIndexGiven (IndexPrototype bstr ni) h (strPos + 1) (Vertical $ backtrack 4 h)
+                linkToPrevious h eval writePos
+            (Vertical filePos) -> do
+                writePos <- startCleanBlock h (B.index bstr $ fromIntegral strPos)
+                eval <- evaluate filePos
+                updateIndexGiven (IndexPrototype bstr ni) h (strPos + 1) (Vertical $ backtrack 8 h)
+                linkToPrevious h eval writePos
+
+    where tertiaryVal :: Tertiary Int32 -> Integer
+          tertiaryVal (Vertical i) = toInteger i
+
+
+----------------------------------------------------------------------------------------------------
+
+-- Seek to the end of the file, write a blank triple given the Char cha
+
+startCleanBlock :: Handle -> Char -> IO (Int32)
 startCleanBlock h cha = do
-    hSeek h SeekFromEnd 0
+    hSeek h SeekFromEnd (toInteger 0)
     writePos <- liftM fromInteger (hTell h)
     writeBytes 1 h cha
-    writeBytes 4 h (0 :: Int)
-    writeBytes 4 h (1 :: Int)
+    writeBytes 4 h (0 :: Int32)
+    writeBytes 4 h (1 :: Int32)
     return $ writePos
 
-linkToPrevious :: Handle -> Int -> Int -> IO ()
+
+----------------------------------------------------------------------------------------------------
+
+-- writes a link to the current IndexTriple at the previous triple
+
+linkToPrevious :: Handle -> Int32 -> Int32 -> IO ()
 linkToPrevious h filePos writePos = do
     hSeek h AbsoluteSeek (toInteger filePos)
-    writeBytes 4 h (writePos :: Int)
+    writeBytes 4 h (writePos :: Int32)
 
+
+----------------------------------------------------------------------------------------------------
+
+-- Writes an object @obj@ of size @nBytes@ to the file handle @h@
 
 writeBytes :: (Storable a) => Int -> Handle -> a -> IO ()
 writeBytes nBytes h obj = do
@@ -142,6 +248,10 @@ writeBytes nBytes h obj = do
     hPutBuf h ptr nBytes
     free ptr
 
+
+----------------------------------------------------------------------------------------------------
+
+-- Reads an object of size @nBytes@ from the file @h@. File cursor must be set by caller
 
 readBytes :: (Storable a) => Int -> Handle -> a
 readBytes nBytes h = unsafePerformIO $ do
@@ -152,11 +262,20 @@ readBytes nBytes h = unsafePerformIO $ do
     return $ ret
 
 
-backtrack :: Int -> Handle -> Int
+----------------------------------------------------------------------------------------------------
+
+-- find the file position located @i@ bytes before the current position. Does not actually move
+-- the file cursor
+
+backtrack :: Int32 -> Handle -> Int32
 backtrack i h = (\x -> x - i) . fromInteger . unsafePerformIO $ hTell h
 
 
-seekToDollar :: Handle -> Integer -> Char -> Ternary Int
+----------------------------------------------------------------------------------------------------
+
+-- checks all characters on an index level to see if they match the @cha@
+
+seekToDollar :: Handle -> Integer -> Char -> Tertiary Int32
 seekToDollar h fpos cha
     | fpos == 1 = Horizontal ((fromInteger $ unsafePerformIO $ hTell h) - 4)
     | otherwise = unsafePerformIO $ do

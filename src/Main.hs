@@ -6,6 +6,7 @@ import Index
 import qualified Data.ByteString.Char8 as B
 
 main = do
+    pushStdIdx (IndexPrototype (B.pack "hello") 12)
     bool <- testIndexPush
     if bool == True
         then putStrLn "_test: Index Lookup Successful"
