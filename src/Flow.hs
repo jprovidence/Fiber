@@ -6,6 +6,8 @@ module Flow (
 
 import qualified Data.ByteString.Char8 as B
 import qualified Data.List as L
+import System.IO.Unsafe
+import Control.Arrow
 import Network.HTTP
 import Network.URI
 import Text.XML.HXT.Core
@@ -14,26 +16,34 @@ import Text.XML.HXT.Core
 type ByteString = B.ByteString
 
 
---extractLinks :: String -> [String]
---extractLinks body =
+extractLinks :: ByteString -> [String]
+extractLinks = proc url -> do
+     returnA <<< arr (\(a, b) -> a ++ b) <<< parseItem &&& parseEntry <<< retrieveData -< url
 
---    where atTag :: String -> String -> String
---          atTag
+
+    where parseItem :: IO (String) -> [String]
+          parseItem = proc unstr -> do
+             str <- arr unsafePerformIO -< unstr
+             returnA -< str
+
+          parseEntry :: IO (String) -> [String]
+          parseEntry = proc str -> do
+              returnA [str]
 
 
 retrieveData :: ByteString -> IO (String)
-retrieveData url =
-    case parseURI $ B.unpack url of
-        Nothing -> putStrLn ("_error_rd: Error parsing url" ++ (B.unpack url)) >> return "x"
-        Just uri -> get uri
+retrieveData = proc str -> do
+    parsed <- (arr (parseURI . B.unpack)) -< str
+    body <- arr get -< parsed
+    returnA -< body
 
-
-get :: URI -> IO (String)
-get uri = do
-    resp <- simpleHTTP (Request uri GET [] "")
-    case resp of
-        Left _ -> putStrLn ("_error_g : Error with http request") >> return "x"
-        Right res -> return $ rspBody res
+    where get :: Maybe URI -> IO (String)
+          get Nothing = return "x"
+          get (Just uri) = do
+              resp <- simpleHTTP (Request uri GET [] "")
+              case resp of
+                  Left _ -> putStrLn ("_error_g: Error with http request") >> return "x"
+                  Right res -> return $ rspBody res
 
 
 
