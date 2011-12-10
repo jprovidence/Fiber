@@ -108,12 +108,17 @@ stdIdxPath = "/home/providence/Dropbox/_ticket/haskell_devel/fiber/fiber/data/in
 ----------------------------------------------------------------------------------------------------
 -- LOOKUP
 
+-- Handles opening and closing of the file, while delegating lookup to #lookupStd
 
 lookupStdIdx :: ByteString -> IO (NodeIndex)
 lookupStdIdx bstr =
     openBinaryFile stdIdxPath ReadWriteMode >>= \h -> lookupStd h bstr 0 (ReadOnly 0) >>= \x ->
     evaluate x >>= \eval -> hClose h >> return eval
 
+
+----------------------------------------------------------------------------------------------------
+
+-- recursively 'strafes' the file to find either the desired NodeIndex or (-1) if it does not exist
 
 lookupStd :: Handle -> ByteString -> Int -> Tertiary Int32 -> IO (NodeIndex)
 lookupStd h bstr sPos (ReadOnly fPos)
@@ -129,11 +134,8 @@ lookupStd h bstr sPos (ReadOnly fPos)
                                                                                         (ReadOnly n)
 
 
-
-
 ----------------------------------------------------------------------------------------------------
 -- INSERT
-
 
 -- Handles much the cruft of opening/closing + setting binary mode on the file
 -- Delegates the updating of the file given the list of index prototypes to #updateIndexGiven
@@ -209,9 +211,7 @@ updateIndex (IndexPrototype bstr ni) h strPos ter
 -- Write a triple to @h@ built from @a@ @b@ & @c@
 writeTrip :: (Storable a, Storable b) => Handle -> a -> b -> b -> IO ()
 writeTrip h a b c = do
-    writeBytes 1 h a
-    writeBytes 4 h b
-    writeBytes 4 h c
+    writeBytes 1 h a >> writeBytes 4 h b >> writeBytes 4 h c
 
 
 ----------------------------------------------------------------------------------------------------
@@ -221,9 +221,7 @@ writeTrip h a b c = do
 stepLevel :: Handle -> Integer -> Char -> IO (Tertiary Int32)
 stepLevel h fPos ch
     | fPos == 1 = do
-        pos <- hTell h
-        eval <- evaluate pos
-        return $ Horizontal (fromInteger (pos - 4))
+        fmap (unsafePerformIO . evaluate) (hTell h) >>= \e -> return $ Horizontal (fromInteger (e - 4))
     | otherwise = do
         hSeek h AbsoluteSeek fPos
         x <- return $ readBytes 1 h
@@ -255,11 +253,8 @@ moveToDollar h i
 -- Writes an object @obj@ of size @nBytes@ to the file handle @h@
 
 writeBytes :: (Storable a) => Int -> Handle -> a -> IO ()
-writeBytes nBytes h obj = do
-    ptr <- mallocBytes nBytes
-    poke ptr obj
-    hPutBuf h ptr nBytes
-    free ptr
+writeBytes nBytes h obj =
+    mallocBytes nBytes >>= \ptr -> poke ptr obj >> hPutBuf h ptr nBytes >> free ptr
 
 
 ----------------------------------------------------------------------------------------------------
@@ -267,12 +262,8 @@ writeBytes nBytes h obj = do
 -- Reads an object of size @nBytes@ from the file @h@. File cursor must be set by caller
 
 readBytes :: (Storable a) => Int -> Handle -> a
-readBytes nBytes h = unsafePerformIO $ do
-    ptr <- mallocBytes nBytes
-    hGetBuf h ptr nBytes
-    ret <- peek ptr
-    free ptr
-    return $ ret
+readBytes nBytes h = unsafePerformIO $
+    mallocBytes nBytes >>= \ptr -> hGetBuf h ptr nBytes >> peek ptr >>= \ret -> free ptr >> return ret
 
 
 ----------------------------------------------------------------------------------------------------
