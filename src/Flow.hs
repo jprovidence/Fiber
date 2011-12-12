@@ -1,5 +1,5 @@
 module Flow (
-    retrieveData
+    preprocess
 ) where
 
 {-# LANGUAGE Arrows, NoMonomorphismRestriction #-}
@@ -10,6 +10,8 @@ import Data.Char
 import System.IO.Unsafe
 import Control.Arrow
 import Control.Monad
+import Control.Exception
+import Control.Applicative
 import Network.HTTP
 import Network.URI
 import Text.XML.HXT.Core
@@ -19,22 +21,20 @@ type ByteString = B.ByteString
 
 
 data NodePrototype = NodePrototype String [String]
-
+    deriving Show
 
 
 preprocess :: ByteString -> IO [NodePrototype]
 preprocess bstr = do
     body <- retrieveData bstr
+    --nada <- runX (readXml body >>> atTag "description")
+    --putStrLn $ show $ nada
     res <- return $ prototype body
-    lstA <- fst res
-    lstB <- snd res
-    case L.length lstA == 0 of
-        True -> return lstB
-        False -> return lstA
+    (++) <$> (fst res) <*> (snd res)
 
     where prototype :: String -> (IO [NodePrototype], IO [NodePrototype])
           prototype = proc str -> do
-          returnA <<< arr (parseIE "entry") &&& arr (parseIE "item") -< str
+              returnA <<< arr (parseIE "entry") &&& arr (parseIE "item") -< str
 
 
 
@@ -51,35 +51,35 @@ retrieveData url = case parseURI (B.unpack url) of
 
 
 parseIE :: String -> String -> IO [NodePrototype]
-parseIE sNode str = runX (readXml str >>> (linkAndDescriptions sNode)) >>= \[(links, descs)] ->
-    return $ L.map prototype $ L.zip links (L.map linksIn descs)
+parseIE sNode str = runX (readXml str >>> (linkAndDescriptions sNode)) >>= \tpls ->
+    return (L.map (\(loc, bdy) -> NodePrototype (L.head loc) (linksIn $ L.head bdy)) tpls)
 
     where linksIn :: String -> [String]
           linksIn desc = unsafePerformIO $ runX(readHtml desc >>> getLinks) >>= \[links] -> return links
 
-          prototype :: (String, [String]) -> NodePrototype
-          prototype (a, b) = NodePrototype a b
-
 
 linkAndDescriptions :: ArrowXml a => String -> a XmlTree ([String], [String])
-linkAndDescriptions sNode = proc str -> do
-    descs <- listA (atTag "description" >>> text) <<< atTag sNode -< str
-    links <- arr combine <<< origLinks &&& plainLinks -< str
-    returnA -< (links, descs)
+linkAndDescriptions sNode = atTag sNode >>>
+    proc str -> do
+        descs <- listA (atTag "description" >>> text) -< str
+        links <- arr combine <<< origLinks &&& plainLinks -< str
+        returnA -< (links, descs)
 
     where origLinks :: ArrowXml a => a XmlTree [String]
-          origLinks = listA (atTag "origLink" >>> text)
+          origLinks = listA (atLocalTag "origLink" >>> text)
 
           plainLinks :: ArrowXml a => a XmlTree [String]
           plainLinks = listA (atTag "link" >>> text)
 
           combine :: ([String], [String]) -> [String]
-          combine (a, b) = L.map (\(l1, l2) -> l1 ++ l2) (L.zip a b)
+          combine (a, b) = case L.length a == 0 of
+                               True -> b
+                               False -> a
 
 
 getLinks :: ArrowXml a => a XmlTree [String]
 getLinks = proc str -> do
-    returnA <<< listA (atTagCase "a" >>> text) -< str
+    returnA <<< listA (atTagCase "a" >>> getAttrValue "href") -< str
 
 
 readXml :: String -> IOStateArrow s b XmlTree
@@ -92,6 +92,10 @@ readHtml = readString [withValidate no, withParseHTML yes, withWarnings no]
 
 atTag :: ArrowXml a => String -> a XmlTree XmlTree
 atTag tag = deep (isElem >>> hasName tag)
+
+
+atLocalTag :: ArrowXml a => String -> a XmlTree XmlTree
+atLocalTag tag = deep (isElem >>> hasNameWith ((== tag) . localPart))
 
 
 atTagCase :: ArrowXml a => String -> a XmlTree XmlTree

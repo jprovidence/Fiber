@@ -70,6 +70,7 @@ import System.IO
 import System.IO.Error
 import System.IO.Unsafe
 import Control.Monad
+import Control.Applicative
 import Control.Exception
 import Foreign.Marshal.Alloc
 import Foreign.Storable
@@ -192,7 +193,7 @@ updateIndex (IndexPrototype bstr ni) h strPos ter
                     (Horizontal res) -> updateIndex (IndexPrototype bstr ni) h strPos pType
             otherwise -> do
                 fPos <- return $ extractTertiary ter
-                end <- liftM (unsafePerformIO . evaluate) (getEnd h)
+                end <- unsafePerformIO . evaluate $ getEnd h
                 writeTrip h curChar (0 :: Int32) (1 :: Int32)
                 updatePos <- cursorBack h 8
                 updateIndex (IndexPrototype bstr ni) h (strPos + 1) (Vertical updatePos)
@@ -221,7 +222,7 @@ writeTrip h a b c = do
 stepLevel :: Handle -> Integer -> Char -> IO (Tertiary Int32)
 stepLevel h fPos ch
     | fPos == 1 = do
-        fmap (unsafePerformIO . evaluate) (hTell h) >>= \e -> return $ Horizontal (fromInteger (e - 4))
+        (unsafePerformIO . evaluate) <$> (hTell h) >>= \e -> return $ Horizontal (fromInteger (e - 4))
     | otherwise = do
         hSeek h AbsoluteSeek fPos
         x <- return $ readBytes 1 h

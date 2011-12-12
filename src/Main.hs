@@ -13,7 +13,8 @@ main = do
 
 testStdIndex :: IO ()
 testStdIndex = do
-    retrieveData (B.pack "http://rss.cbc.ca/lineup/topstories.xml")
+    procd <- preprocess (B.pack "http://feeds.feedburner.com/zerohedge/feed?fmt=xml")
+    putStrLn $ show procd
     pushStdIdx (IndexPrototype (B.pack "http://www.test.com/1") 12)
     pushStdIdx (IndexPrototype (B.pack "http://www.mock.com/2") 14)
     res <- lookupStdIdx $ B.pack "http://www.test.com/1"
