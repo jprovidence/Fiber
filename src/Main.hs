@@ -13,7 +13,7 @@ main = do
 
 testStdIndex :: IO ()
 testStdIndex = do
-    procd <- preprocess (B.pack "http://feeds.feedburner.com/zerohedge/feed?fmt=xml")
+    procd <- preprocess (B.pack "http://kellyoxford.tumblr.com/rss")
     putStrLn $ show procd
     pushStdIdx (IndexPrototype (B.pack "http://www.test.com/1") 12)
     pushStdIdx (IndexPrototype (B.pack "http://www.mock.com/2") 14)

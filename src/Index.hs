@@ -52,16 +52,18 @@
 module Index (
     IndexTree(IndexTree)
 ,   IndexPrototype(IndexPrototype)
+,   NodePrototype(NodePrototype)
 ,   pushIndex
 ,   indexLookup
 ,   pushStdIdx
 ,   lookupStdIdx
+,   writeBytes
+,   readBytes
 ) where
 
 import qualified Data.ByteString.Char8 as B
 import qualified Data.ByteString.Lazy as BL
 import qualified Data.ByteString.Internal as BI
-import Data.Binary.Put
 import Data.Word
 import Data.List as L
 import Data.Maybe
@@ -87,6 +89,9 @@ data IndexTpl = Tpl Word8 (Maybe Word32) (Maybe Word32)
 data IndexTree = IndexTree ByteString [IndexTree] (Maybe NodeIndex)
 
 data IndexPrototype = IndexPrototype ByteString NodeIndex
+
+data NodePrototype = NodePrototype String [String]
+    deriving Show
 
 data Tertiary a = ReadOnly a
                  | Vertical a

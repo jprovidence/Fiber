@@ -15,12 +15,11 @@ import Control.Applicative
 import Network.HTTP
 import Network.URI
 import Text.XML.HXT.Core
+import Node
+import Index
 
 
 type ByteString = B.ByteString
-
-data NodePrototype = NodePrototype String [String]
-    deriving Show
 
 
 ----------------------------------------------------------------------------------------------------
@@ -30,8 +29,8 @@ data NodePrototype = NodePrototype String [String]
 preprocess :: ByteString -> IO [NodePrototype]
 preprocess bstr =
     retrieveData bstr >>= \body -> if (body == "x")
-                                   then return []
-                                   else return (prototype body) >>= \res ->
+                                    then return []
+                                    else return (prototype body) >>= \res ->
                                          (++) <$> (fst res) <*> (snd res)
 
     where prototype :: String -> (IO [NodePrototype], IO [NodePrototype])
