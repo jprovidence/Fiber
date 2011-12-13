@@ -36,9 +36,13 @@ appendRoot nodh str rels =
     let bstr = B.pack str
     in lookupStdIdx bstr >>= \lookupRes ->
     case lookupRes of
-        (-1) -> openRelAtEnd >>= \relh -> join ((evaluate . fromInteger) <$> (hTell relh)) >>= \eval ->
-               writeRels relh rels >> hClose relh >> writeRoot nodh eval >>= \pos ->
-               pushStdIdx (IndexPrototype bstr pos) >> return pos
+        (-1) -> do
+            relh <- openRelAtEnd
+            eval <- join ((evaluate . fromInteger) <$> (hTell relh))
+            writeRels relh rels
+            hClose relh
+            pos <- writeRoot nodh eval
+            pushStdIdx (IndexPrototype bstr pos) >> return pos
 
 
     where writeRoot :: Handle -> Int32 -> IO Int32
@@ -51,8 +55,10 @@ appendRoot nodh str rels =
               in relLen >>= writeBytes 1 h >> rels >>= mapM_ (\x -> (writeBytes 4 h) x)
 
           openRelAtEnd :: IO Handle
-          openRelAtEnd = openBinaryFile stdRelsPath ReadWriteMode >>= \h -> hSeek h SeekFromEnd 0 >>
-                         return h
+          openRelAtEnd = do
+              h <- openBinaryFile stdRelsPath ReadWriteMode
+              hSeek h SeekFromEnd 0
+              return h
 
 
 appendPlaceholder :: Handle -> String -> IO (Int32)
