@@ -26,14 +26,14 @@ type ByteString = B.ByteString
 
 -- Preprocess the bytestring url into the series of articles + internal links it represents
 
-preprocess :: ByteString -> IO [NodePrototype]
+preprocess :: ByteString -> IO [Node String]
 preprocess bstr =
     retrieveData bstr >>= \body -> if (body == "x")
-                                    then return []
+                                    then return [Blank]
                                     else return (prototype body) >>= \res ->
                                          (++) <$> (fst res) <*> (snd res)
 
-    where prototype :: String -> (IO [NodePrototype], IO [NodePrototype])
+    where prototype :: String -> (IO [Node String], IO [Node String])
           prototype = proc str -> do
               returnA <<< arr (parseIE "entry") &&& arr (parseIE "item") -< str
 
@@ -61,9 +61,9 @@ retrieveData url = case parseURI (B.unpack url) of
 -- the 'description' tag of that article. This func is given a String "item" or "entry" to indicate
 -- which element it should parse by.
 
-parseIE :: String -> String -> IO [NodePrototype]
+parseIE :: String -> String -> IO [Node String]
 parseIE sNode str = runX (readXml str >>> (linkAndDescriptions sNode)) >>= \tpls ->
-    return (L.map (\(loc, bdy) -> NodePrototype (L.head loc) (linksIn $ L.head bdy)) tpls)
+    return (L.map (\(loc, bdy) -> Node (L.head loc) (linksIn $ L.head bdy)) tpls)
 
     where linksIn :: String -> [String]
           linksIn desc = unsafePerformIO $ runX(readHtml desc >>> getLinks) >>= \[links] -> return links

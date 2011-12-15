@@ -52,7 +52,7 @@
 module Index (
     IndexTree(IndexTree)
 ,   IndexPrototype(IndexPrototype)
-,   NodePrototype(NodePrototype)
+,   Node(Node, Blank)
 ,   pushIndex
 ,   indexLookup
 ,   pushStdIdx
@@ -82,15 +82,12 @@ type ByteString = B.ByteString
 
 type NodeIndex = Int32
 
-type Node = Word32
-
-data IndexTpl = Tpl Word8 (Maybe Word32) (Maybe Word32)
-
 data IndexTree = IndexTree ByteString [IndexTree] (Maybe NodeIndex)
 
 data IndexPrototype = IndexPrototype ByteString NodeIndex
 
-data NodePrototype = NodePrototype String [String]
+data Node a = Node a [a]
+             | Blank
     deriving Show
 
 data Tertiary a = ReadOnly a
@@ -130,14 +127,17 @@ lookupStd :: Handle -> ByteString -> Int -> Tertiary Int32 -> IO (NodeIndex)
 lookupStd h bstr sPos (ReadOnly fPos)
     | fPos == 1 = return (-1)
     | sPos == B.length bstr =
-        moveToDollar h fPos >> return (readBytes 4 h) >>= \x -> return x
+        moveToDollar h fPos >>= \bool -> if bool
+                                          then readBytes 4 h
+                                          else return (-1)
     | otherwise = do
         hSeek h AbsoluteSeek $ toInteger fPos
-        ch <- return $ readBytes 1 h
+        ch <- readBytes 1 h
         case ch == (B.index bstr sPos) of
-            True -> return (readBytes 4 h) >>= \new -> lookupStd h bstr (sPos + 1) (ReadOnly new)
-            False -> hSeek h RelativeSeek 4 >> return (readBytes 4 h) >>= \n -> lookupStd h bstr sPos
-                                                                                        (ReadOnly n)
+            True -> readBytes 4 h >>= return . ReadOnly >>= lookupStd h bstr (sPos + 1)
+            False -> hSeek h RelativeSeek 4 >> readBytes 4 h >>= return . ReadOnly >>=
+                    lookupStd h bstr sPos
+
 
 
 ----------------------------------------------------------------------------------------------------
@@ -178,16 +178,21 @@ updateIndex :: IndexPrototype -> Handle -> Int -> Tertiary Int32 -> IO ()
 updateIndex (IndexPrototype bstr ni) h strPos ter
     | strPos == (B.length bstr) =
         case ter of
-            (Vertical v) -> do
-                writePos <- liftM (unsafePerformIO . evaluate) $ getEnd h
-                writeTrip h (L.head "$") ni (1 :: Int32)
-                hSeek h AbsoluteSeek $ toInteger v
-                writeBytes 4 h writePos
+            (Vertical v) ->
+                getEnd h >>= evaluate >>= \e -> writeTrip h (L.head "$") ni (1 :: Int32) >>
+                hSeek h AbsoluteSeek (toInteger v) >> writeBytes 4 h e
             (ReadOnly ro) -> do
                 dollarFound <- moveToDollar h ro
                 if dollarFound == True
                     then writeBytes 4 h ni
-                    else return ()
+                    else do
+                        midp <- hTell h >>= evaluate . ((-4) +)
+                        hSeek h SeekFromEnd 0
+                        endp <- hTell h >>= evaluate . fromInteger
+                        writeTrip h (L.head "$") ni (1 :: Int32)
+                        hSeek h AbsoluteSeek midp
+                        writeBytes 4 h (endp :: Int32)
+
     | otherwise =
         let curChar = B.index bstr $ fromIntegral strPos
         in case ter of
@@ -198,7 +203,7 @@ updateIndex (IndexPrototype bstr ni) h strPos ter
                     (Horizontal res) -> updateIndex (IndexPrototype bstr ni) h strPos pType
             otherwise -> do
                 fPos <- return $ extractTertiary ter
-                end <- unsafePerformIO . evaluate $ getEnd h
+                end <- getEnd h >>= evaluate
                 writeTrip h curChar (0 :: Int32) (1 :: Int32)
                 updatePos <- cursorBack h 8
                 updateIndex (IndexPrototype bstr ni) h (strPos + 1) (Vertical updatePos)
@@ -209,7 +214,7 @@ updateIndex (IndexPrototype bstr ni) h strPos ter
           getEnd h = hSeek h SeekFromEnd 0 >> hTell h >>= \x -> return $ fromInteger x
 
           cursorBack :: Handle -> Int32 -> IO (Int32)
-          cursorBack h i = liftM ((\x -> x - i) . fromInteger . unsafePerformIO . evaluate) (hTell h)
+          cursorBack h i = join ((evaluate . ((-i) +) . fromInteger) <$> (hTell h))
 
 
 ----------------------------------------------------------------------------------------------------
@@ -227,15 +232,15 @@ writeTrip h a b c = do
 stepLevel :: Handle -> Integer -> Char -> IO (Tertiary Int32)
 stepLevel h fPos ch
     | fPos == 1 = do
-        (unsafePerformIO . evaluate) <$> (hTell h) >>= \e -> return $ Horizontal (fromInteger (e - 4))
+        hTell h >>= evaluate . fromInteger . ((-4) +) >>= return . Horizontal
     | otherwise = do
-        hSeek h AbsoluteSeek fPos
-        x <- return $ readBytes 1 h
-        case x == ch of
-            True -> evaluate $ ReadOnly (readBytes 4 h)
-            False -> do
-                hSeek h RelativeSeek 4
-                stepLevel h (toInteger $ ((readBytes 4 h) :: Int)) ch
+        hSeek h AbsoluteSeek fPos >> readBytes 1 h >>= \x ->
+            case x == ch of
+                True -> readBytes 4 h >>= evaluate >>= return . ReadOnly
+                False -> do
+                    hSeek h RelativeSeek 4
+                    p <- readBytes 4 h >>= \x -> return (toInteger (x :: Int32))
+                    stepLevel h p ch
 
 
 ----------------------------------------------------------------------------------------------------
@@ -248,10 +253,10 @@ moveToDollar h i
     | i == 1 = return False
     | otherwise = do
         hSeek h AbsoluteSeek $ toInteger i
-        x <- return $ readBytes 1 h
+        x <- readBytes 1 h
         case x == (L.head "$") of
             True -> return True
-            False -> hSeek h RelativeSeek 4 >> return (readBytes 4 h) >>= \y -> moveToDollar h y
+            False -> hSeek h RelativeSeek 4 >> readBytes 4 h >>= moveToDollar h
 
 
 ----------------------------------------------------------------------------------------------------
@@ -267,8 +272,8 @@ writeBytes nBytes h obj =
 
 -- Reads an object of size @nBytes@ from the file @h@. File cursor must be set by caller
 
-readBytes :: (Storable a) => Int -> Handle -> a
-readBytes nBytes h = unsafePerformIO $
+readBytes :: (Storable a) => Int -> Handle -> IO (a)
+readBytes nBytes h =
     mallocBytes nBytes >>= \ptr -> hGetBuf h ptr nBytes >> peek ptr >>= \ret -> free ptr >> return ret
 
 
