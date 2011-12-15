@@ -115,8 +115,8 @@ stdIdxPath = "/home/providence/Dropbox/_ticket/haskell_devel/fiber/fiber/data/in
 
 lookupStdIdx :: ByteString -> IO (NodeIndex)
 lookupStdIdx bstr =
-    openBinaryFile stdIdxPath ReadWriteMode >>= \h -> lookupStd h bstr 0 (ReadOnly 0) >>= \x ->
-    evaluate x >>= \eval -> hClose h >> return eval
+    openBinaryFile stdIdxPath ReadWriteMode >>= \h -> lookupStd h bstr 0 (ReadOnly 0) >>= evaluate >>= \e ->
+    hClose h >> return e
 
 
 ----------------------------------------------------------------------------------------------------
@@ -211,10 +211,10 @@ updateIndex (IndexPrototype bstr ni) h strPos ter
                 writeBytes 4 h end
 
     where getEnd :: Handle -> IO (Int32)
-          getEnd h = hSeek h SeekFromEnd 0 >> hTell h >>= \x -> return $ fromInteger x
+          getEnd h = hSeek h SeekFromEnd 0 >> hTell h >>= return . fromInteger
 
           cursorBack :: Handle -> Int32 -> IO (Int32)
-          cursorBack h i = join ((evaluate . ((-i) +) . fromInteger) <$> (hTell h))
+          cursorBack h i = hTell h >>= evaluate . ((-i) +) . fromInteger
 
 
 ----------------------------------------------------------------------------------------------------

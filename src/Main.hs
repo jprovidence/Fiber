@@ -18,10 +18,10 @@ testFlow :: IO ()
 testFlow = do
     test1 <- preprocess (B.pack "http://feeds.feedburner.com/zerohedge/feed")
     putStrLn $ show test1
-    putStrLn "\n\n\n"
+    putStrLn "\n"
     test2 <- preprocess (B.pack "http://feeds.feedburner.com/oilpricecom?fmt=xml")
     putStrLn $ show test2
-    putStrLn "\n\n\n _test: Flow working correctly"
+    putStrLn "\n_test: Flow working correctly"
 
 
 testNodeInject :: IO ()
@@ -29,18 +29,26 @@ testNodeInject = do
     proto1 <- return (Node "http://www.test.com"
                          ["http://www.rel1.com", "http://www.rel2.com", "http://www.rel3.com"])
     injectNPrototype proto1
-    relationshipsOn $ B.pack "http://www.test.com"
+    (Node res1 lst1) <- relationshipsOn $ B.pack "http://www.test.com"
+
     proto2 <- return (Node "http://www.rel1.com"
                          ["http://www.oth1.com", "http://www.oth2.com", "http://www.oth3.com"])
     injectNPrototype proto2
-    res2 <- relationshipsOn $ B.pack "http://www.rel1.com"
-    putStrLn $ show res2
+    (Node res2 lst2) <- relationshipsOn $ B.pack "http://www.rel1.com"
+
+    putStrLn $ "Fst Node Result: " ++ (show res1) ++ " " ++ (show lst1)
+    putStrLn $ "Sec Node Result: " ++ (show res2) ++ " " ++ (show lst2)
+    if res2 == (lst1 !! 0)
+        then putStrLn "_test: Node Injection appears to be functioning."
+        else putStrLn "_test _ERR_ Node Injection not functioning"
 
 
 testStdIndex :: IO ()
 testStdIndex = do
     pushStdIdx (IndexPrototype (B.pack "http://www.test.com/1123") 10)
+    pushStdIdx (IndexPrototype (B.pack "http://www.test.com/11") 5)
     pushStdIdx (IndexPrototype (B.pack "http://www.test.com/1") 12)
+    pushStdIdx (IndexPrototype (B.pack "http://www.teqst.com") 1)
     pushStdIdx (IndexPrototype (B.pack "http://www.mock.com/2") 14)
     res <- lookupStdIdx $ B.pack "http://www.test.com/1"
     if res == 12

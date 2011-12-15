@@ -35,13 +35,13 @@ relationshipsOn bstr =
 
     where getRelPos :: Int32 -> IO Int32
           getRelPos ind =
-              openBinaryFile stdNodePath ReadMode >>= \h -> hSeek h RelativeSeek (toInteger ind) >>
+              openBinaryFile stdNodePath ReadMode >>= \h -> hSeek h AbsoluteSeek (toInteger ind) >>
               readBytes 4 h >>= evaluate >>= \e -> hClose h >> return e
 
           readRels :: Int32 -> IO [Int32]
           readRels pos = do
               h <- openBinaryFile stdRelsPath ReadMode
-              hSeek h RelativeSeek $ toInteger pos
+              hSeek h AbsoluteSeek $ toInteger pos
               e <- readBytes 1 h >>= evaluate
               ret <- replicateM e (readBytes 4 h)
               hClose h
@@ -79,20 +79,17 @@ appendRoot nodh str rels =
             hSeek nodh AbsoluteSeek $ toInteger indx
             exists <- readBytes 4 nodh
             case (exists :: Int32) of
-                (-1) -> do
-                    eval <- writeRels rels
-                    hSeek nodh SeekFromEnd $ toInteger indx
-                    writeBytes 4 nodh (eval :: Int32)
+                (-1) ->
+                    hSeek nodh AbsoluteSeek (toInteger indx) >> writeRels rels >>= writeBytes 4 nodh
                 _ -> return ()
 
     where writeRoot :: Handle -> Int32 -> IO Int32
-          writeRoot h pos =
-              writeBytes 4 h pos >> join ((evaluate . ((-4) +) . fromInteger) <$> (hTell h)) >>= return
+          writeRoot h pos = writeBytes 4 h pos >> hTell h >>= evaluate . fromInteger >>= return
 
           writeRels :: [Int32] -> IO Int32
           writeRels rels = do
               h <- openRelAtEnd
-              eval <- join ((evaluate . fromInteger) <$> (hTell h))
+              eval <- hTell h >>= evaluate .fromInteger
               writeBytes 1 h $ L.length rels
               mapM_ (\x -> writeBytes 4 h x) rels
               hClose h
@@ -115,8 +112,8 @@ appendPlaceholder h str =
     let bstr = B.pack str
     in lookupStdIdx bstr >>= \lookupRes ->
     case lookupRes of
-        (-1) -> join ((evaluate . fromInteger) <$> (hTell h)) >>= \eval -> writeBytes 4 h ((-1) :: Int32) >>
-               evaluate (pushStdIdx (IndexPrototype bstr eval)) >> return eval
+        (-1) -> hTell h >>= evaluate . fromInteger >>= \e -> writeBytes 4 h ((-1) :: Int32) >>
+               pushStdIdx (IndexPrototype bstr e) >> return e
         indx -> return indx
 
 
