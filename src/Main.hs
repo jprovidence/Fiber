@@ -5,6 +5,7 @@ module Main (
 import Index
 import Flow
 import Node
+import Input
 import qualified Data.ByteString.Char8 as B
 
 main = do
@@ -39,8 +40,8 @@ testNodeInject = do
     putStrLn $ "Fst Node Result: " ++ (show res1) ++ " " ++ (show lst1)
     putStrLn $ "Sec Node Result: " ++ (show res2) ++ " " ++ (show lst2)
     if res2 == (lst1 !! 0)
-        then putStrLn "_test: Node Injection appears to be functioning."
-        else putStrLn "_test _ERR_ Node Injection not functioning"
+        then putStrLn "_test: Node Injection appears to be functioning.\n"
+        else putStrLn "_test _ERR_ Node Injection not functioning.\n"
 
 
 testStdIndex :: IO ()

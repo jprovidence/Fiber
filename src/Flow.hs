@@ -1,5 +1,8 @@
 module Flow (
     preprocess
+,   readHtml
+,   readXml
+,   getLinks
 ) where
 
 {-# LANGUAGE Arrows, NoMonomorphismRestriction #-}
@@ -15,7 +18,6 @@ import Control.Applicative
 import Network.HTTP
 import Network.URI
 import Text.XML.HXT.Core
-import Node
 import Index
 
 

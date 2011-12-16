@@ -8,11 +8,8 @@ import qualified Data.List as L
 import qualified Data.ByteString.Char8 as B
 import Data.Int
 import System.IO
-import System.IO.Unsafe
 import Control.Monad
 import Control.Exception
-import Control.Applicative
-import Foreign.Storable
 import Index
 
 
@@ -24,6 +21,10 @@ stdNodePath = "/home/providence/Dropbox/_ticket/haskell_devel/fiber/fiber/data/n
 -- path to initial relationship store
 stdRelsPath = "/home/providence/Dropbox/_ticket/haskell_devel/fiber/fiber/data/rels_initial._ticket"
 
+
+----------------------------------------------------------------------------------------------------
+
+--
 
 relationshipsOn :: ByteString -> IO (Node Int32)
 relationshipsOn bstr =
