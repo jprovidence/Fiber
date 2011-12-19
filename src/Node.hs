@@ -72,17 +72,12 @@ appendRoot nodh str rels =
     let bstr = B.pack str
     in lookupStdIdx bstr >>= \lookupRes ->
     case lookupRes of
-        (-1) -> do
-            eval <- writeRels rels
-            pos <- writeRoot nodh eval
-            pushStdIdx (IndexPrototype bstr pos)
-        indx -> do
-            hSeek nodh AbsoluteSeek $ toInteger indx
-            exists <- readBytes 4 nodh
-            case (exists :: Int32) of
-                (-1) ->
-                    hSeek nodh AbsoluteSeek (toInteger indx) >> writeRels rels >>= writeBytes 4 nodh
-                _ -> return ()
+        (-1) -> writeRels rels >>= writeRoot nodh >>= pushStdIdx . (IndexPrototype bstr)
+        indx -> hSeek nodh AbsoluteSeek (toInteger indx) >> readBytes 4 nodh >>= \exists ->
+         case (exists :: Int32) of
+             (-1) ->
+                 hSeek nodh AbsoluteSeek (toInteger indx) >> writeRels rels >>= writeBytes 4 nodh
+             _ -> return ()
 
     where writeRoot :: Handle -> Int32 -> IO Int32
           writeRoot h pos = writeBytes 4 h pos >> hTell h >>= evaluate . fromInteger >>= return
